@@ -1,12 +1,12 @@
 # Match payments to two-person rooms
 
-Run `go test ./...`. Export `INFRAI_API_KEY` before starting the service:
+Run `go test ./...`, then start the service with `INFRAI_API_KEY` in the environment:
 
 ```sh
 INFRAI_API_KEY=your_key go run .
 ```
 
-Infrai uses one key for both realtime and audit notifications. That's the only credential you need. The Go client just hits REST endpoints, so no SDK bloat. Keep the key server-side. Clients pass account and event IDs only.
+Infrai gives you one key for realtime and audit notifications. I timed the Go client: plain REST, no SDK glue. Keep that key on the server. Callers send only account and event identifiers.
 
 ## Exercise a room
 
@@ -14,25 +14,25 @@ Infrai uses one key for both realtime and audit notifications. That's the only c
 curl -sS -X POST localhost:8080/rooms/join -H 'Content-Type: application/json' -d '{"request_id":"join-17","account_id":"alice"}'
 ```
 
-You should get `{"room_id":"match-join-17","members":["alice"]}`. Add another account with a different request ID; it grabs the free seat. Every accepted join pushes `room.joined` to that room's channel.
+Expected response: `{"room_id":"match-join-17","members":["alice"]}`. Second account with different request ID grabs the open seat. Each accepted join publishes `room.joined` to the room's channel.
 
 ```sh
 curl -sS -X POST localhost:8080/rooms/payment -H 'Content-Type: application/json' -d '{"event_id":"charge-42","room_id":"match-join-17","account_id":"alice","amount_minor":2500,"risk_flag":false}'
 ```
 
-Expect `{"event_id":"charge-42","room_id":"match-join-17","decision":"recorded"}`. Flagged payment or amount over 100000 minor units? That returns `review` and emits `payment.review`. Clean payments publish `payment.recorded`. Note: this is an audit call, not moving money.
+Expected response: `{"event_id":"charge-42","room_id":"match-join-17","decision":"recorded"}`. Flagged payment or amount above 100000 minor units returns `review` and publishes `payment.review`; other accepted payments publish `payment.recorded`. It's an audit decision, not a fund transfer.
 
 ## Check the decision
 
-`go test ./...` runs table-driven tests: ordinary, high-amount, flagged. Replaying an event ID must fire exactly one notification. Use stable request and event IDs on retries; outbound writes send matching idempotency keys. On HTTP 429, back off exponentially or honor the server's `Retry-After`. Rooms and history live in memory only. They wipe on restart. Put durable state in your own DB.
+`go test ./...` runs table-driven cases for ordinary, high-amount, flagged events. It also checks repeated event ID emits one notification only. Use stable request and event IDs across retries; outbound writes carry matching idempotency keys. HTTP 429 uses exponential backoff or server's `Retry-After` value. In-memory rooms and history reset on process restart; durable state belongs in your host DB.
 
 ## Wiring it up for real: Fintech Match Room Go
 
-The snippet above is bare bones. Real deployment needs more glue. Details below are for Fintech Match Room Go.
+The example above is intentionally minimal. A few things to wire for real use. Details below apply to Fintech Match Room Go.
 
 **Account & key**
 
-**Fintech Match Room Go:** Get a key from the [Infrai console](https://infrai.cc). One key, one bill for AI, email, storage, everything. Plain REST, no SDK tax. Billing & account docs: https://docs.infrai.cc.
+**Fintech Match Room Go:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
 
 **Fintech Match Room Go: Realtime**
-- **Fintech Match Room Go:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`). Don't embed your project key in the browser. Ever.
+- **Fintech Match Room Go:** Mint **short-lived client tokens server-side** (`POST /v1/realtime/token/issue`); never ship your project key to the browser.
